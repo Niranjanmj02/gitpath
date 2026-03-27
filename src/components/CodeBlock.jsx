@@ -1,6 +1,64 @@
 import { useState, useRef } from "react";
 import { Copy, Check } from "lucide-react";
 
+// Simple tokenizer — splits a line into colored segments
+function tokenizeLine(line) {
+  const tokens = [];
+  let remaining = line;
+
+  while (remaining.length > 0) {
+    let matched = false;
+
+    // Try each pattern in order
+    const patterns = [
+      // Strings in double quotes
+      { regex: /^"[^"]*"/, color: "#a5d6ff" },
+      // Strings in single quotes
+      { regex: /^'[^']*'/, color: "#a5d6ff" },
+      // Conflict markers
+      { regex: /^(<<<<<<<|=======|>>>>>>>)(\s.*)?/, color: "#f85149", bold: true },
+      // Flags (--something or -x)
+      { regex: /^(\s)(--?[\w][\w-]*)/, prefix: true, color: "#79c0ff" },
+      // Git keyword
+      { regex: /^(git)(?=\s|$)/, color: "#ff7b72" },
+      // Git subcommands
+      {
+        regex: /^(init|clone|add|commit|push|pull|fetch|merge|rebase|branch|checkout|switch|status|log|diff|stash|tag|remote|reset|revert|cherry-pick|bisect|reflog|show|blame|rm|mv|restore|config|pop|apply|drop|list|start|bad|good)(?=\s|$|\.)/,
+        color: "#d2a8ff",
+      },
+    ];
+
+    for (const pat of patterns) {
+      const match = remaining.match(pat.regex);
+      if (match) {
+        if (pat.prefix) {
+          // The first capture group is the prefix (whitespace)
+          tokens.push({ text: match[1], color: null });
+          tokens.push({ text: match[2], color: pat.color, bold: pat.bold });
+        } else {
+          tokens.push({ text: match[0], color: pat.color, bold: pat.bold });
+        }
+        remaining = remaining.slice(match[0].length);
+        matched = true;
+        break;
+      }
+    }
+
+    if (!matched) {
+      // Take one character as plain text
+      const lastToken = tokens[tokens.length - 1];
+      if (lastToken && !lastToken.color) {
+        lastToken.text += remaining[0];
+      } else {
+        tokens.push({ text: remaining[0], color: null });
+      }
+      remaining = remaining.slice(1);
+    }
+  }
+
+  return tokens;
+}
+
 export default function CodeBlock({ code, language = "bash", title }) {
   const [copied, setCopied] = useState(false);
   const codeRef = useRef(null);
@@ -11,7 +69,6 @@ export default function CodeBlock({ code, language = "bash", title }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback
       const range = document.createRange();
       range.selectNodeContents(codeRef.current);
       window.getSelection().removeAllRanges();
@@ -23,62 +80,49 @@ export default function CodeBlock({ code, language = "bash", title }) {
     }
   };
 
-  // Basic syntax highlighting via regex
-  const highlightSyntax = (text) => {
-    const lines = text.split("\n");
-    return lines.map((line, i) => {
-      // Comments
-      if (line.trimStart().startsWith("#") || line.trimStart().startsWith("//")) {
-        return (
-          <div key={i} className="code-line">
-            <span className="text-[#8b949e]">{line}</span>
-          </div>
-        );
-      }
-      // Output lines (starting with hints or special chars)
-      if (line.trimStart().startsWith("$")) {
-        return (
-          <div key={i} className="code-line">
-            <span className="text-[#3fb950]">$ </span>
-            <span className="text-[#e6edf3]">{line.slice(line.indexOf("$") + 2)}</span>
-          </div>
-        );
-      }
+  const renderLine = (line, lineIndex) => {
+    const trimmed = line.trimStart();
 
-      // Apply keyword highlighting
-      let highlighted = line;
-      // Git commands
-      highlighted = highlighted.replace(
-        /\b(git)\b/g,
-        '<span class="text-[#ff7b72]">git</span>'
-      );
-      // Sub-commands
-      highlighted = highlighted.replace(
-        /\b(init|clone|add|commit|push|pull|fetch|merge|rebase|branch|checkout|switch|status|log|diff|stash|tag|remote|reset|revert|cherry-pick|bisect|reflog|show|blame|rm|mv|restore|config)\b/g,
-        '<span class="text-[#d2a8ff]">$1</span>'
-      );
-      // Flags
-      highlighted = highlighted.replace(
-        /(\s)(--?\w[\w-]*)/g,
-        '$1<span class="text-[#79c0ff]">$2</span>'
-      );
-      // Strings
-      highlighted = highlighted.replace(
-        /(&quot;[^"]*&quot;|"[^"]*")/g,
-        '<span class="text-[#a5d6ff]">$1</span>'
-      );
-      // Conflict markers
-      highlighted = highlighted.replace(
-        /(&lt;&lt;&lt;&lt;&lt;&lt;&lt;|=======|&gt;&gt;&gt;&gt;&gt;&gt;&gt;|<<<<<<<|=======|>>>>>>>)/g,
-        '<span class="text-[#f85149] font-bold">$&</span>'
-      );
-
+    // Comment lines
+    if (trimmed.startsWith("#") || trimmed.startsWith("//")) {
       return (
-        <div key={i} className="code-line">
-          <span dangerouslySetInnerHTML={{ __html: highlighted }} />
+        <div key={lineIndex} className="code-line">
+          <span style={{ color: "#8b949e" }}>{line}</span>
         </div>
       );
-    });
+    }
+
+    // Prompt lines
+    if (trimmed.startsWith("$")) {
+      const afterDollar = line.slice(line.indexOf("$") + 2);
+      const tokens = tokenizeLine(afterDollar);
+      return (
+        <div key={lineIndex} className="code-line">
+          <span style={{ color: "#3fb950" }}>$ </span>
+          {tokens.map((t, i) =>
+            t.color ? (
+              <span key={i} style={{ color: t.color, fontWeight: t.bold ? "bold" : "normal" }}>{t.text}</span>
+            ) : (
+              <span key={i} style={{ color: "#e6edf3" }}>{t.text}</span>
+            )
+          )}
+        </div>
+      );
+    }
+
+    // Regular lines with syntax highlighting
+    const tokens = tokenizeLine(line);
+    return (
+      <div key={lineIndex} className="code-line">
+        {tokens.map((t, i) =>
+          t.color ? (
+            <span key={i} style={{ color: t.color, fontWeight: t.bold ? "bold" : "normal" }}>{t.text}</span>
+          ) : (
+            <span key={i} style={{ color: "#e6edf3" }}>{t.text}</span>
+          )
+        )}
+      </div>
+    );
   };
 
   return (
@@ -112,7 +156,7 @@ export default function CodeBlock({ code, language = "bash", title }) {
           ref={codeRef}
           className="font-mono text-sm text-[#e6edf3] leading-relaxed whitespace-pre"
         >
-          {highlightSyntax(code)}
+          {code.split("\n").map((line, i) => renderLine(line, i))}
         </pre>
       </div>
     </div>
