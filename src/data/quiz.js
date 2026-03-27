@@ -1,7 +1,7 @@
 const quizQuestions = [
   {
     id: 1,
-    question: "What does `git init` do?",
+    question: "What does `git init` do kusuma ?",
     options: [
       "Downloads a repository from GitHub",
       "Initializes a new Git repository in the current directory",
